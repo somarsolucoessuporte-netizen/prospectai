@@ -1,0 +1,7 @@
+{
+  "extends": "@prospectai/typescript-config/library.json",
+  "compilerOptions": {
+    "baseUrl": "."
+  },
+  "include": ["src"]
+}

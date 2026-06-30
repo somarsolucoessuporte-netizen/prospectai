@@ -1,0 +1,223 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================================
+// ORGANIZACAO / MULTI-TENANT
+// ============================================================
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  members   Member[]
+  prospects Prospect[]
+  campaigns Campaign[]
+
+  @@map("organizations")
+}
+
+model Member {
+  id             String     @id @default(cuid())
+  organizationId String     @map("organization_id")
+  userId         String     @map("user_id") // Supabase Auth UID
+  role           MemberRole @default(MEMBER)
+  createdAt      DateTime   @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@map("members")
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+// ============================================================
+// CORE — PROSPECTS
+// ============================================================
+
+model Prospect {
+  id             String @id @default(cuid())
+  organizationId String @map("organization_id")
+
+  // Identificacao
+  name        String
+  slug        String?
+  cnpj        String? @unique
+  category    String? // Categoria de negocio
+  subcategory String?
+
+  // Localizacao
+  address String?
+  city    String?
+  state   String?
+  country String  @default("BR")
+  lat     Float?
+  lng     Float?
+
+  // Contato
+  phone   String?
+  email   String?
+  website String?
+
+  // Presenca digital
+  googlePlaceId String? @unique @map("google_place_id")
+  googleRating  Float?  @map("google_rating")
+  googleReviews Int?    @map("google_reviews")
+  instagramUrl  String? @map("instagram_url")
+  facebookUrl   String? @map("facebook_url")
+  linkedinUrl   String? @map("linkedin_url")
+
+  // Score e status
+  score       Int? // 0-100
+  scoreReason String?        @map("score_reason")
+  status      ProspectStatus @default(NEW)
+
+  // Metadados
+  sources     String[] // ["google_maps", "instagram", ...]
+  rawData     Json?     @map("raw_data")
+  enrichedAt  DateTime? @map("enriched_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  interactions Interaction[]
+  tags         ProspectTag[]
+
+  @@map("prospects")
+}
+
+enum ProspectStatus {
+  NEW
+  ENRICHED
+  ANALYZED
+  CONTACTED
+  NEGOTIATING
+  CONVERTED
+  LOST
+  DISQUALIFIED
+}
+
+// ============================================================
+// TAGS
+// ============================================================
+
+model Tag {
+  id    String @id @default(cuid())
+  name  String @unique
+  color String @default("#6366f1")
+
+  prospects ProspectTag[]
+
+  @@map("tags")
+}
+
+model ProspectTag {
+  prospectId String @map("prospect_id")
+  tagId      String @map("tag_id")
+
+  prospect Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  tag      Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([prospectId, tagId])
+  @@map("prospect_tags")
+}
+
+// ============================================================
+// CAMPANHAS
+// ============================================================
+
+model Campaign {
+  id             String         @id @default(cuid())
+  organizationId String         @map("organization_id")
+  name           String
+  description    String?
+  status         CampaignStatus @default(DRAFT)
+  config         Json? // Configuracao dos agentes para esta campanha
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("campaigns")
+}
+
+enum CampaignStatus {
+  DRAFT
+  RUNNING
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+// ============================================================
+// INTERACOES / CRM BASICO
+// ============================================================
+
+model Interaction {
+  id         String          @id @default(cuid())
+  prospectId String          @map("prospect_id")
+  userId     String          @map("user_id")
+  type       InteractionType
+  notes      String?
+  metadata   Json?
+  createdAt  DateTime        @default(now()) @map("created_at")
+
+  prospect Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+
+  @@map("interactions")
+}
+
+enum InteractionType {
+  NOTE
+  EMAIL
+  WHATSAPP
+  CALL
+  MEETING
+  PROPOSAL
+  FOLLOW_UP
+}
+
+// ============================================================
+// JOBS DOS AGENTES (fila de execucao)
+// ============================================================
+
+model AgentJob {
+  id          String    @id @default(cuid())
+  agentName   String    @map("agent_name") // "scout", "collector", "analyst"...
+  status      JobStatus @default(PENDING)
+  payload     Json
+  result      Json?
+  error       String?
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3) @map("max_attempts")
+  scheduledAt DateTime? @map("scheduled_at")
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([status, scheduledAt])
+  @@index([agentName, status])
+  @@map("agent_jobs")
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}

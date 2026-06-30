@@ -1,0 +1,18 @@
+# docker-compose.yml
+# Ambiente de desenvolvimento local.
+# Supabase remoto e usado em producao — Docker aqui e apenas para ferramentas auxiliares.
+
+services:
+  # Prisma Studio — Interface visual do banco
+  prisma-studio:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: sh -c "npm install && cd packages/database && npx prisma studio"
+    ports:
+      - "5555:5555"
+    env_file:
+      - .env.local
+    profiles:
+      - studio
