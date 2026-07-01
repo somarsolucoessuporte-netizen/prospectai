@@ -13,6 +13,16 @@ const envSchema = z.object({
   // App
   NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+
+  // Groq (IA gratuita — Llama 3)
+  GROQ_API_KEY: z.string().min(1),
+  GROQ_MODEL: z.string().default("llama3-70b-8192"),
+
+  // Worker
+  WORKER_SECRET: z.string().default("prospectai-worker-secret-2025"),
+
+  // OpenStreetMap — sem chave necessaria
+  OSM_OVERPASS_URL: z.string().url().default("https://overpass-api.de/api/interpreter"),
 });
 
 export const env = envSchema.parse(process.env);

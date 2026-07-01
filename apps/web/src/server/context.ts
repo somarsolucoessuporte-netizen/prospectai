@@ -9,9 +9,17 @@ export async function createContext(_opts: FetchCreateContextFnOptions) {
     data: { user },
   } = await supabase.auth.getUser();
 
+  const member = user
+    ? await prisma.member.findFirst({
+        where: { userId: user.id },
+        select: { organizationId: true },
+      })
+    : null;
+
   return {
     db: prisma,
     user,
+    organizationId: member?.organizationId ?? null,
   };
 }
 
