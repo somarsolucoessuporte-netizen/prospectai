@@ -27,17 +27,22 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Redireciona para login se nao autenticado e tentando acessar dashboard
-  if (!user && request.nextUrl.pathname.startsWith("/dashboard")) {
+  // Rotas servidas pelo route group (dashboard) — nao aparece na URL, entao
+  // precisa ser listado explicitamente aqui.
+  const protectedPaths = ["/prospects", "/campaigns", "/settings"];
+  const isProtectedPath = protectedPaths.some((path) => request.nextUrl.pathname.startsWith(path));
+
+  // Redireciona para login se nao autenticado e tentando acessar area logada
+  if (!user && isProtectedPath) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
   }
 
-  // Redireciona para dashboard se ja autenticado e tentando acessar login
+  // Redireciona para a area logada se ja autenticado e tentando acessar login
   if (user && (request.nextUrl.pathname === "/login" || request.nextUrl.pathname === "/register")) {
     const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
+    url.pathname = "/prospects";
     return NextResponse.redirect(url);
   }
 
