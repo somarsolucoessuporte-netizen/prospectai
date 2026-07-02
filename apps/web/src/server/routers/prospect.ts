@@ -1,3 +1,4 @@
+import { AgentWorker } from "@prospectai/agents";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
@@ -32,18 +33,20 @@ export const prospectRouter = router({
         },
       });
 
-      // Dispara o worker via API route (fire-and-forget)
-      const workerUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/worker`;
-      fetch(workerUrl, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.WORKER_SECRET}`,
-        },
-      }).catch(() => {
-        // Worker roda em background — ignora erros aqui
+      // Processa o job aqui dentro, de forma sincrona: em serverless (Vercel)
+      // a funcao e encerrada assim que a resposta e enviada, entao um fetch
+      // "fire-and-forget" para /api/worker e cancelado antes de rodar.
+      // Processar dentro da mesma invocacao garante que o job realmente execute.
+      const overpassUrl = process.env.OSM_OVERPASS_URL ?? "https://overpass-api.de/api/interpreter";
+      const worker = new AgentWorker(overpassUrl);
+      await worker.processJob(job.id);
+
+      const finalJob = await ctx.db.agentJob.findUnique({
+        where: { id: job.id },
+        select: { status: true },
       });
 
-      return { jobId: job.id, status: "PENDING" };
+      return { jobId: job.id, status: finalJob?.status ?? "PENDING" };
     }),
 
   // Verifica o status de um job

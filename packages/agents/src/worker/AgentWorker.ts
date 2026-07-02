@@ -1,4 +1,4 @@
-import { prisma, type Prisma } from "@prospectai/database";
+import { prisma, type AgentJob, type Prisma } from "@prospectai/database";
 
 import { ProspectPersistenceService } from "../services/ProspectPersistenceService";
 import { ScoutAgent, type ScoutPayload, type ScoutResult } from "../scout/ScoutAgent";
@@ -6,8 +6,11 @@ import { ScoutAgent, type ScoutPayload, type ScoutResult } from "../scout/ScoutA
 /**
  * AgentWorker — processa jobs da fila AgentJob.
  *
- * Design simples para MVP: polling no banco.
- * Futuramente pode ser substituido por BullMQ ou similar.
+ * Design simples para MVP: sem loop de polling em background (nao ha um
+ * processo Node de longa duracao no ambiente serverless da Vercel). Cada
+ * job e processado de forma sincrona dentro da propria requisicao que o
+ * cria (ver prospect.ts#search). processNext() fica disponivel para
+ * disparo manual/rotina de limpeza de jobs presos.
  */
 export class AgentWorker {
   private readonly persistenceService: ProspectPersistenceService;
@@ -18,6 +21,7 @@ export class AgentWorker {
     this.persistenceService = new ProspectPersistenceService();
   }
 
+  /** Processa o job pendente mais antigo da fila. */
   async processNext(): Promise<boolean> {
     const job = await prisma.agentJob.findFirst({
       where: {
@@ -29,6 +33,19 @@ export class AgentWorker {
 
     if (!job) return false;
 
+    return this.runJob(job);
+  }
+
+  /** Processa um job especifico, se ainda estiver pendente. */
+  async processJob(jobId: string): Promise<boolean> {
+    const job = await prisma.agentJob.findUnique({ where: { id: jobId } });
+
+    if (!job || job.status !== "PENDING") return false;
+
+    return this.runJob(job);
+  }
+
+  private async runJob(job: AgentJob): Promise<boolean> {
     await prisma.agentJob.update({
       where: { id: job.id },
       data: { status: "RUNNING", startedAt: new Date(), attempts: { increment: 1 } },
