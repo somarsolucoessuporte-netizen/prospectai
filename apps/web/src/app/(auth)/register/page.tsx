@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
-import { trpc } from "@/lib/trpc/client";
 
 const ERROR_MESSAGES: Record<string, string> = {
   "User already registered": "Este e-mail já está cadastrado.",
@@ -19,8 +18,6 @@ export default function RegisterPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [confirmationPending, setConfirmationPending] = useState(false);
-
-  const completeRegistration = trpc.auth.completeRegistration.useMutation();
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -47,18 +44,8 @@ export default function RegisterPage() {
       return;
     }
 
-    try {
-      await completeRegistration.mutateAsync({ name });
-    } catch (mutationError) {
-      setLoading(false);
-      setError(
-        mutationError instanceof Error
-          ? mutationError.message
-          : "Não foi possível concluir o cadastro."
-      );
-      return;
-    }
-
+    // A Organization + Member sao provisionadas automaticamente pelo contexto
+    // do tRPC na primeira requisicao autenticada (ver server/organization.ts)
     router.push("/prospects");
     router.refresh();
   };

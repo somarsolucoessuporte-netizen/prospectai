@@ -92,11 +92,14 @@ export const prospectRouter = router({
     )
     .query(async ({ input, ctx }) => {
       const organizationId = ctx.organizationId;
+      const { page, limit, search, city, status } = input;
+
+      // Organizacao ainda nao provisionada (falha pontual) — lista vazia em
+      // vez de erro, a UI mostra uma mensagem amigavel.
       if (!organizationId) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Organizacao nao encontrada" });
+        return { prospects: [], total: 0, pages: 0, page };
       }
 
-      const { page, limit, search, city, status } = input;
       const skip = (page - 1) * limit;
 
       const where = {
@@ -151,8 +154,11 @@ export const prospectRouter = router({
   // Detalhes de um prospect
   byId: protectedProcedure.input(z.object({ id: z.string() })).query(async ({ input, ctx }) => {
     const organizationId = ctx.organizationId;
+
+    // Organizacao ainda nao provisionada — trata como "nao encontrado",
+    // igual a um prospect que nao existe.
     if (!organizationId) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "Organizacao nao encontrada" });
+      throw new TRPCError({ code: "NOT_FOUND", message: "Prospect nao encontrado" });
     }
 
     const prospect = await ctx.db.prospect.findFirst({
