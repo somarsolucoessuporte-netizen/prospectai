@@ -4,8 +4,19 @@ import { z } from "zod";
 
 import { protectedProcedure, router } from "../trpc";
 
+const PROSPECT_STATUS_VALUES = [
+  "NEW",
+  "ENRICHED",
+  "ANALYZED",
+  "CONTACTED",
+  "NEGOTIATING",
+  "CONVERTED",
+  "LOST",
+  "DISQUALIFIED",
+] as const;
+
 export const prospectRouter = router({
-  // Cria um job de busca para o ScoutAgent
+  // Cria uma SearchSession + um job de busca para o ScoutAgent
   search: protectedProcedure
     .input(
       z.object({
@@ -25,11 +36,20 @@ export const prospectRouter = router({
         });
       }
 
+      const session = await ctx.db.searchSession.create({
+        data: {
+          organizationId,
+          query: input.query,
+          city: input.city,
+          state: input.state,
+        },
+      });
+
       const job = await ctx.db.agentJob.create({
         data: {
           agentName: "scout",
           status: "PENDING",
-          payload: { ...input, organizationId, country: "Brazil" },
+          payload: { ...input, organizationId, sessionId: session.id, country: "Brazil" },
         },
       });
 
@@ -46,7 +66,7 @@ export const prospectRouter = router({
         select: { status: true },
       });
 
-      return { jobId: job.id, status: finalJob?.status ?? "PENDING" };
+      return { jobId: job.id, sessionId: session.id, status: finalJob?.status ?? "PENDING" };
     }),
 
   // Verifica o status de um job
@@ -71,87 +91,187 @@ export const prospectRouter = router({
       return job;
     }),
 
-  // Lista prospects da organizacao
-  list: protectedProcedure
+  // Lista as sessoes de busca da organizacao (abas), mais recente primeiro
+  sessions: protectedProcedure.query(async ({ ctx }) => {
+    const organizationId = ctx.organizationId;
+    if (!organizationId) return [];
+
+    const sessions = await ctx.db.searchSession.findMany({
+      where: { organizationId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        query: true,
+        city: true,
+        state: true,
+        totalFound: true,
+        createdAt: true,
+        _count: { select: { prospects: true } },
+      },
+    });
+
+    return sessions.map((s) => ({
+      id: s.id,
+      query: s.query,
+      city: s.city,
+      state: s.state,
+      totalFound: s.totalFound,
+      createdAt: s.createdAt,
+      count: s._count.prospects,
+    }));
+  }),
+
+  // Lista os prospects de uma sessao de busca especifica (conteudo da aba)
+  bySession: protectedProcedure
     .input(
       z.object({
+        sessionId: z.string(),
         page: z.number().min(1).default(1),
-        limit: z.number().min(1).max(100).default(20),
-        search: z.string().optional(),
-        city: z.string().optional(),
-        status: z
-          .enum([
-            "NEW",
-            "ENRICHED",
-            "ANALYZED",
-            "CONTACTED",
-            "NEGOTIATING",
-            "CONVERTED",
-            "LOST",
-            "DISQUALIFIED",
-          ])
-          .optional(),
+        limit: z.number().min(1).max(200).default(100),
       })
     )
     .query(async ({ input, ctx }) => {
       const organizationId = ctx.organizationId;
-      const { page, limit, search, city, status } = input;
+      const { sessionId, page, limit } = input;
 
-      // Organizacao ainda nao provisionada (falha pontual) — lista vazia em
-      // vez de erro, a UI mostra uma mensagem amigavel.
       if (!organizationId) {
+        return { prospects: [], total: 0, pages: 0, page };
+      }
+
+      const session = await ctx.db.searchSession.findFirst({
+        where: { id: sessionId, organizationId },
+        select: { id: true },
+      });
+
+      if (!session) {
         return { prospects: [], total: 0, pages: 0, page };
       }
 
       const skip = (page - 1) * limit;
 
-      const where = {
-        organizationId,
-        ...(search
-          ? {
-              OR: [
-                { name: { contains: search, mode: "insensitive" as const } },
-                { city: { contains: search, mode: "insensitive" as const } },
-                { category: { contains: search, mode: "insensitive" as const } },
-              ],
-            }
-          : {}),
-        ...(city ? { city: { contains: city, mode: "insensitive" as const } } : {}),
-        ...(status ? { status } : {}),
-      };
-
-      const [prospects, total] = await Promise.all([
-        ctx.db.prospect.findMany({
-          where,
+      const [links, total] = await Promise.all([
+        ctx.db.searchSessionProspect.findMany({
+          where: { sessionId },
           skip,
           take: limit,
-          orderBy: [{ score: "desc" }, { createdAt: "desc" }],
+          orderBy: { prospect: { score: "desc" } },
           select: {
-            id: true,
-            name: true,
-            category: true,
-            address: true,
-            city: true,
-            state: true,
-            phone: true,
-            website: true,
-            googleRating: true,
-            googleReviews: true,
-            score: true,
-            status: true,
-            sources: true,
-            createdAt: true,
+            prospect: {
+              select: {
+                id: true,
+                name: true,
+                category: true,
+                address: true,
+                city: true,
+                state: true,
+                phone: true,
+                website: true,
+                googleRating: true,
+                googleReviews: true,
+                score: true,
+                status: true,
+                sources: true,
+                createdAt: true,
+              },
+            },
           },
         }),
-        ctx.db.prospect.count({ where }),
+        ctx.db.searchSessionProspect.count({ where: { sessionId } }),
       ]);
 
       return {
-        prospects,
+        prospects: links.map((l) => l.prospect),
         total,
         pages: Math.ceil(total / limit),
         page,
       };
+    }),
+
+  // Exclui uma sessao de busca e os prospects que pertencem exclusivamente a ela
+  deleteSession: protectedProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      const organizationId = ctx.organizationId;
+      if (!organizationId) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Organizacao nao encontrada" });
+      }
+
+      const session = await ctx.db.searchSession.findFirst({
+        where: { id: input.sessionId, organizationId },
+        select: { id: true },
+      });
+
+      if (!session) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Busca nao encontrada" });
+      }
+
+      const links = await ctx.db.searchSessionProspect.findMany({
+        where: { sessionId: input.sessionId },
+        select: { prospectId: true },
+      });
+      const prospectIds = links.map((l) => l.prospectId);
+
+      // Prospects que tambem pertencem a OUTRAS sessoes nao devem ser apagados
+      const sharedLinks = await ctx.db.searchSessionProspect.findMany({
+        where: { prospectId: { in: prospectIds }, sessionId: { not: input.sessionId } },
+        select: { prospectId: true },
+      });
+      const sharedIds = new Set(sharedLinks.map((l) => l.prospectId));
+      const exclusiveIds = prospectIds.filter((id) => !sharedIds.has(id));
+
+      await ctx.db.$transaction([
+        ctx.db.prospect.deleteMany({ where: { id: { in: exclusiveIds } } }),
+        ctx.db.searchSession.delete({ where: { id: input.sessionId } }),
+      ]);
+
+      return { success: true };
+    }),
+
+  // Atualiza o status de um prospect (ex.: Novo -> Contatado)
+  updateStatus: protectedProcedure
+    .input(z.object({ id: z.string(), status: z.enum(PROSPECT_STATUS_VALUES) }))
+    .mutation(async ({ input, ctx }) => {
+      const organizationId = ctx.organizationId;
+      if (!organizationId) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Organizacao nao encontrada" });
+      }
+
+      const prospect = await ctx.db.prospect.findFirst({
+        where: { id: input.id, organizationId },
+        select: { id: true },
+      });
+
+      if (!prospect) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Prospect nao encontrado" });
+      }
+
+      return ctx.db.prospect.update({
+        where: { id: input.id },
+        data: { status: input.status },
+      });
+    }),
+
+  // Remove um prospect
+  delete: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      const organizationId = ctx.organizationId;
+      if (!organizationId) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Organizacao nao encontrada" });
+      }
+
+      const prospect = await ctx.db.prospect.findFirst({
+        where: { id: input.id, organizationId },
+        select: { id: true },
+      });
+
+      if (!prospect) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Prospect nao encontrado" });
+      }
+
+      await ctx.db.prospect.delete({ where: { id: input.id } });
+
+      return { success: true };
     }),
 
   // Detalhes de um prospect

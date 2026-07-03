@@ -60,6 +60,7 @@ export class AgentWorker {
 
       const agent = new ScoutAgent(this.overpassUrl);
       const organizationId = (payload.organizationId as string | undefined) ?? "";
+      const sessionId = payload.sessionId as string | undefined;
       const result = await agent.execute(payload as unknown as ScoutPayload, {
         organizationId,
         jobId: job.id,
@@ -74,11 +75,19 @@ export class AgentWorker {
         const scoutData: ScoutResult = result.data;
         const persistResult = await this.persistenceService.persistMany(
           organizationId,
+          sessionId,
           scoutData.prospects
         );
         console.log(
           `[AgentWorker] Persistidos: ${persistResult.created} criados, ${persistResult.skipped} ignorados`
         );
+
+        if (sessionId) {
+          await prisma.searchSession.update({
+            where: { id: sessionId },
+            data: { totalFound: persistResult.prospects.length },
+          });
+        }
       }
 
       await prisma.agentJob.update({

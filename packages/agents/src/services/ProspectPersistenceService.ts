@@ -16,7 +16,11 @@ export interface PersistResult {
  * para o MVP.
  */
 export class ProspectPersistenceService {
-  async persistMany(organizationId: string, rawProspects: RawProspect[]): Promise<PersistResult> {
+  async persistMany(
+    organizationId: string,
+    sessionId: string | undefined,
+    rawProspects: RawProspect[]
+  ): Promise<PersistResult> {
     const results: Prospect[] = [];
     let created = 0;
     let skipped = 0;
@@ -31,34 +35,43 @@ export class ProspectPersistenceService {
           },
         });
 
+        let prospect: Prospect;
+
         if (existing) {
           skipped++;
-          results.push(existing);
-          continue;
+          prospect = existing;
+        } else {
+          prospect = await prisma.prospect.create({
+            data: {
+              organizationId,
+              name: raw.name,
+              address: raw.address,
+              city: raw.city,
+              state: raw.state,
+              country: raw.country,
+              lat: raw.lat,
+              lng: raw.lng,
+              phone: raw.phone,
+              website: raw.website,
+              email: raw.email,
+              category: raw.category,
+              sources: ["openstreetmap"],
+              rawData: raw.rawData as Prisma.InputJsonValue,
+              status: "NEW",
+            },
+          });
+          created++;
         }
 
-        const prospect = await prisma.prospect.create({
-          data: {
-            organizationId,
-            name: raw.name,
-            address: raw.address,
-            city: raw.city,
-            state: raw.state,
-            country: raw.country,
-            lat: raw.lat,
-            lng: raw.lng,
-            phone: raw.phone,
-            website: raw.website,
-            email: raw.email,
-            category: raw.category,
-            sources: ["openstreetmap"],
-            rawData: raw.rawData as Prisma.InputJsonValue,
-            status: "NEW",
-          },
-        });
+        if (sessionId) {
+          await prisma.searchSessionProspect.upsert({
+            where: { sessionId_prospectId: { sessionId, prospectId: prospect.id } },
+            update: {},
+            create: { sessionId, prospectId: prospect.id },
+          });
+        }
 
         results.push(prospect);
-        created++;
       } catch (error) {
         console.error(`Erro ao persistir prospect ${raw.name}:`, error);
         skipped++;

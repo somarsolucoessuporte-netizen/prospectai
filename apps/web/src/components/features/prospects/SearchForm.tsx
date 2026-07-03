@@ -36,6 +36,8 @@ export function SearchForm() {
     state: "CE",
     maxResults: 50,
   });
+  const [progress, setProgress] = useState(0);
+  const [messageIndex, setMessageIndex] = useState(0);
 
   const search = trpc.prospect.search.useMutation({
     onSuccess: (data) => setJobId(data.jobId),
@@ -52,14 +54,51 @@ export function SearchForm() {
     }
   );
 
-  // A tabela de prospects tem sua propria query (cache separado do tRPC) —
-  // precisa ser invalidada explicitamente quando o job termina, senao
-  // continua mostrando os dados de antes da busca.
+  // A tabela de prospects tem suas proprias queries (cache separado do tRPC) —
+  // precisam ser invalidadas explicitamente quando o job termina, senao
+  // continuam mostrando os dados de antes da busca.
   useEffect(() => {
     if (jobStatus.data?.status === "COMPLETED") {
-      void utils.prospect.list.invalidate();
+      void utils.prospect.sessions.invalidate();
+      void utils.prospect.bySession.invalidate();
     }
   }, [jobStatus.data?.status, utils]);
+
+  const progressMessages = [
+    "Conectando ao OpenStreetMap...",
+    `Buscando ${form.query || "empresas"} em ${form.city}...`,
+    "Processando resultados...",
+    "Salvando no banco de dados...",
+    "Quase pronto...",
+  ];
+
+  // Barra de progresso simulada: nao ha atualizacoes incrementais reais do
+  // servidor (a busca roda de forma sincrona), entao ela sobe gradualmente
+  // ate 90% enquanto a mutation esta pendente e salta pra 100% ao terminar.
+  useEffect(() => {
+    if (search.isPending) {
+      setProgress(8);
+      setMessageIndex(0);
+
+      const progressTimer = setInterval(() => {
+        setProgress((p) => (p < 90 ? Math.min(90, p + 6) : p));
+      }, 400);
+
+      const messageTimer = setInterval(() => {
+        setMessageIndex((i) => (i + 1) % progressMessages.length);
+      }, 3000);
+
+      return () => {
+        clearInterval(progressTimer);
+        clearInterval(messageTimer);
+      };
+    }
+
+    setProgress((p) => (p > 0 ? 100 : 0));
+    const resetTimer = setTimeout(() => setProgress(0), 800);
+    return () => clearTimeout(resetTimer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search.isPending]);
 
   const isRunning =
     search.isPending ||
@@ -154,6 +193,21 @@ export function SearchForm() {
           {isRunning ? "Buscando..." : "Buscar empresas"}
         </button>
       </div>
+
+      {(search.isPending || progress > 0) && (
+        <div className="mt-4">
+          <div className="mb-1 flex items-center justify-between text-xs text-gray-500">
+            <span>{progressMessages[messageIndex]}</span>
+            <span>{Math.round(progress)}%</span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
+            <div
+              className="h-2 rounded-full bg-indigo-600 transition-all duration-300 ease-out"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {jobId && (
         <div className="mt-4 flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">

@@ -19,9 +19,10 @@ model Organization {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  members   Member[]
-  prospects Prospect[]
-  campaigns Campaign[]
+  members        Member[]
+  prospects      Prospect[]
+  campaigns      Campaign[]
+  searchSessions SearchSession[]
 
   @@map("organizations")
 }
@@ -93,9 +94,10 @@ model Prospect {
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
-  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  interactions Interaction[]
-  tags         ProspectTag[]
+  organization   Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  interactions   Interaction[]
+  tags           ProspectTag[]
+  searchSessions SearchSessionProspect[]
 
   @@map("prospects")
 }
@@ -134,6 +136,37 @@ model ProspectTag {
 
   @@id([prospectId, tagId])
   @@map("prospect_tags")
+}
+
+// ============================================================
+// SESSOES DE BUSCA — historico de prospeccoes, exibido em abas na UI
+// ============================================================
+
+model SearchSession {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  query          String
+  city           String
+  state          String
+  totalFound     Int      @default(0) @map("total_found")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  prospects    SearchSessionProspect[]
+
+  @@index([organizationId, createdAt])
+  @@map("search_sessions")
+}
+
+model SearchSessionProspect {
+  sessionId  String @map("session_id")
+  prospectId String @map("prospect_id")
+
+  session  SearchSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  prospect Prospect      @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+
+  @@id([sessionId, prospectId])
+  @@map("search_session_prospects")
 }
 
 // ============================================================
