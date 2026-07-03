@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { trpc } from "@/lib/trpc/client";
 
@@ -55,6 +55,7 @@ const BRAZIL_STATES = [
 ] as const;
 
 export function SearchForm() {
+  const utils = trpc.useUtils();
   const [jobId, setJobId] = useState<string | null>(null);
   const [form, setForm] = useState({
     query: "",
@@ -77,6 +78,15 @@ export function SearchForm() {
       },
     }
   );
+
+  // A tabela de prospects tem sua propria query (cache separado do tRPC) —
+  // precisa ser invalidada explicitamente quando o job termina, senao
+  // continua mostrando os dados de antes da busca.
+  useEffect(() => {
+    if (jobStatus.data?.status === "COMPLETED") {
+      void utils.prospect.list.invalidate();
+    }
+  }, [jobStatus.data?.status, utils]);
 
   const isRunning =
     search.isPending ||
