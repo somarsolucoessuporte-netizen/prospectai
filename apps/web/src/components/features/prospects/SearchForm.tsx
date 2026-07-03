@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { BRAZIL_CITIES_BY_STATE } from "@/lib/brazil-cities";
 import { trpc } from "@/lib/trpc/client";
 
 const BUSINESS_SUGGESTIONS = [
@@ -24,42 +25,14 @@ const BUSINESS_SUGGESTIONS = [
   "Pet shops",
 ];
 
-const BRAZIL_STATES = [
-  "AC",
-  "AL",
-  "AP",
-  "AM",
-  "BA",
-  "CE",
-  "DF",
-  "ES",
-  "GO",
-  "MA",
-  "MT",
-  "MS",
-  "MG",
-  "PA",
-  "PB",
-  "PR",
-  "PE",
-  "PI",
-  "RJ",
-  "RN",
-  "RS",
-  "RO",
-  "RR",
-  "SC",
-  "SP",
-  "SE",
-  "TO",
-] as const;
+const BRAZIL_STATES = Object.keys(BRAZIL_CITIES_BY_STATE).sort();
 
 export function SearchForm() {
   const utils = trpc.useUtils();
   const [jobId, setJobId] = useState<string | null>(null);
   const [form, setForm] = useState({
     query: "",
-    city: "",
+    city: BRAZIL_CITIES_BY_STATE.CE?.[0] ?? "",
     state: "CE",
     maxResults: 50,
   });
@@ -119,19 +92,28 @@ export function SearchForm() {
 
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-700">Cidade *</label>
-          <input
+          <select
             value={form.city}
             onChange={(e) => setForm({ ...form, city: e.target.value })}
-            placeholder="Ex: Fortaleza"
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
+          >
+            {(BRAZIL_CITIES_BY_STATE[form.state] ?? []).map((city) => (
+              <option key={city} value={city}>
+                {city}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-700">Estado *</label>
           <select
             value={form.state}
-            onChange={(e) => setForm({ ...form, state: e.target.value })}
+            onChange={(e) => {
+              const newState = e.target.value;
+              const firstCity = BRAZIL_CITIES_BY_STATE[newState]?.[0] ?? "";
+              setForm({ ...form, state: newState, city: firstCity });
+            }}
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
           >
             {BRAZIL_STATES.map((s) => (
@@ -160,7 +142,12 @@ export function SearchForm() {
         </div>
 
         <button
-          onClick={() => search.mutate(form)}
+          onClick={() => {
+            // Limpa o job anterior primeiro, senao o status "Busca concluída"
+            // da busca passada continua visivel enquanto a nova roda.
+            setJobId(null);
+            search.mutate(form);
+          }}
           disabled={isRunning || !form.query || !form.city}
           className="rounded-lg bg-indigo-600 px-6 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -188,6 +175,13 @@ export function SearchForm() {
               <span className="font-medium text-green-700">
                 Busca concluída! Prospects carregados abaixo.
               </span>
+              <button
+                type="button"
+                onClick={() => setJobId(null)}
+                className="ml-auto text-xs font-medium text-indigo-600 hover:underline"
+              >
+                Nova busca
+              </button>
             </>
           )}
           {jobStatus.data?.status === "FAILED" && (
