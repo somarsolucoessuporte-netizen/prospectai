@@ -87,6 +87,14 @@ model Prospect {
   scoreReason String?        @map("score_reason")
   status      ProspectStatus @default(NEW)
 
+  // Analise comercial (produzida pelo ScoringAgent)
+  opportunities     String[] @default([])
+  suggestedApproach String?  @map("suggested_approach")
+
+  // Abordagem (produzida pelo WriterAgent)
+  outreachMessage String?   @map("outreach_message")
+  outreachAt      DateTime? @map("outreach_at")
+
   // Metadados
   sources     String[] // ["google_maps", "instagram", ...]
   rawData     Json?     @map("raw_data")

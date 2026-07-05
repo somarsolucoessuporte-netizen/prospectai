@@ -3,6 +3,7 @@ import { prisma, type AgentJob, type Prisma } from "@prospectai/database";
 import { CollectorAgent, type CollectorPayload } from "../collector/CollectorAgent";
 import { EnrichmentAgent, type EnrichmentPayload } from "../enrichment/EnrichmentAgent";
 import { ScoringAgent, type ScoringPayload } from "../scoring/ScoringAgent";
+import { WriterAgent, type WriterPayload } from "../writer/WriterAgent";
 import { ProspectPersistenceService } from "../services/ProspectPersistenceService";
 import { ScoutAgent, type ScoutPayload, type ScoutResult } from "../scout/ScoutAgent";
 import type { AgentResult } from "../base/Agent";
@@ -20,6 +21,7 @@ import type { AgentResult } from "../base/Agent";
  *   scout -> (persiste prospects) -> enfileira scoring + enrichment por prospect
  *   enrichment -> extrai contato do website
  *   scoring   -> gera score 0-100 com Groq/Llama 3
+ *   writer    -> gera mensagem de abordagem (acionado sob demanda)
  *   collector -> busca CNPJ (disponivel, acionado sob demanda)
  */
 export class AgentWorker {
@@ -154,6 +156,18 @@ export class AgentWorker {
         }
         const agent = new ScoringAgent(this.groqApiKey, this.groqModel);
         return agent.execute(payload as unknown as ScoringPayload, {
+          organizationId: "",
+          jobId: job.id,
+          payload,
+        });
+      }
+
+      case "writer": {
+        if (!this.groqApiKey) {
+          throw new Error("GROQ_API_KEY nao configurada");
+        }
+        const agent = new WriterAgent(this.groqApiKey, this.groqModel);
+        return agent.execute(payload as unknown as WriterPayload, {
           organizationId: "",
           jobId: job.id,
           payload,

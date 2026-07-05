@@ -4,5 +4,6 @@ export * from "./collector";
 export * from "./enrichment";
 export * from "./analyst";
 export * from "./scoring";
+export * from "./writer";
 export * from "./services/ProspectPersistenceService";
 export * from "./worker/AgentWorker";

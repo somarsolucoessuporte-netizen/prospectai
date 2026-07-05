@@ -5,13 +5,21 @@
  * prefixo "55" precisa aparecer uma unica vez no link, entao so e
  * adicionado se os digitos extraidos ainda nao comecarem com ele.
  */
-export function toWhatsAppLink(phone: string | null | undefined): string | null {
+export function toWhatsAppLink(
+  phone: string | null | undefined,
+  message?: string | null
+): string | null {
   if (!phone) return null;
 
   const digits = phone.replace(/\D/g, "");
   if (!digits) return null;
 
   const withCountryCode = digits.startsWith("55") ? digits : `55${digits}`;
+  const base = `https://wa.me/${withCountryCode}`;
 
-  return `https://wa.me/${withCountryCode}`;
+  if (message && message.trim().length > 0) {
+    return `${base}?text=${encodeURIComponent(message)}`;
+  }
+
+  return base;
 }

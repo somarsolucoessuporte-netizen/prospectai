@@ -119,6 +119,8 @@ export class ScoringAgent extends Agent<ScoringPayload, ScoringResult> {
         data: {
           score: result.score,
           scoreReason: result.reason,
+          opportunities: result.opportunities,
+          suggestedApproach: result.suggestedApproach,
           status: "ANALYZED",
         },
       });

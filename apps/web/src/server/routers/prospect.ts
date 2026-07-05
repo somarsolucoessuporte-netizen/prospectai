@@ -122,6 +122,62 @@ export const prospectRouter = router({
       return { queued: prospects.length, processed };
     }),
 
+  // Gera (ou regera) a mensagem de abordagem de um prospect com o WriterAgent.
+  // Processa o job de forma sincrona para devolver a mensagem imediatamente.
+  generateOutreach: protectedProcedure
+    .input(
+      z.object({
+        prospectId: z.string(),
+        channel: z.enum(["whatsapp", "email"]).default("whatsapp"),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const organizationId = ctx.organizationId;
+      if (!organizationId) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Organizacao nao encontrada" });
+      }
+
+      const prospect = await ctx.db.prospect.findFirst({
+        where: { id: input.prospectId, organizationId },
+        select: { id: true },
+      });
+
+      if (!prospect) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Prospect nao encontrado" });
+      }
+
+      const groqApiKey = process.env.GROQ_API_KEY ?? "";
+      if (!groqApiKey) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "GROQ_API_KEY nao configurada",
+        });
+      }
+
+      const job = await ctx.db.agentJob.create({
+        data: {
+          agentName: "writer",
+          status: "PENDING",
+          payload: { prospectId: input.prospectId, channel: input.channel },
+        },
+      });
+
+      const overpassUrl = process.env.OSM_OVERPASS_URL ?? "https://overpass-api.de/api/interpreter";
+      const groqModel = process.env.GROQ_MODEL ?? "llama3-70b-8192";
+      const worker = new AgentWorker(overpassUrl, groqApiKey, groqModel);
+      await worker.processJob(job.id);
+
+      const updated = await ctx.db.prospect.findUnique({
+        where: { id: input.prospectId },
+        select: { id: true, outreachMessage: true, outreachAt: true },
+      });
+
+      return {
+        prospectId: input.prospectId,
+        outreachMessage: updated?.outreachMessage ?? null,
+      };
+    }),
+
   // Verifica o status de um job
   jobStatus: protectedProcedure
     .input(z.object({ jobId: z.string() }))
@@ -223,6 +279,7 @@ export const prospectRouter = router({
                 googleReviews: true,
                 score: true,
                 scoreReason: true,
+                outreachMessage: true,
                 status: true,
                 sources: true,
                 createdAt: true,

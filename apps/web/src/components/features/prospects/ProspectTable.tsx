@@ -61,6 +61,7 @@ export function ProspectTable() {
   const utils = trpc.useUtils();
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  const [generatingId, setGeneratingId] = useState<string | null>(null);
 
   const sessions = trpc.prospect.sessions.useQuery();
 
@@ -115,6 +116,15 @@ export function ProspectTable() {
     },
   });
 
+  const generateOutreach = trpc.prospect.generateOutreach.useMutation({
+    onSettled: () => {
+      setGeneratingId(null);
+      if (selectedSessionId) {
+        void utils.prospect.bySession.invalidate({ sessionId: selectedSessionId });
+      }
+    },
+  });
+
   const selectedSession = sessions.data?.find((s) => s.id === selectedSessionId);
 
   const handleExport = () => {
@@ -129,6 +139,7 @@ export function ProspectTable() {
       WhatsApp: toWhatsAppLink(p.phone) ?? "",
       Score: p.score ?? "",
       Status: STATUS_LABELS[p.status as ProspectStatus] ?? p.status,
+      Abordagem: p.outreachMessage ?? "",
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(rows);
@@ -266,8 +277,9 @@ export function ProspectTable() {
               </tr>
             )}
             {list.data?.prospects.map((prospect) => {
-              const whatsappLink = toWhatsAppLink(prospect.phone);
+              const whatsappLink = toWhatsAppLink(prospect.phone, prospect.outreachMessage);
               const status = prospect.status as ProspectStatus;
+              const isGenerating = generatingId === prospect.id;
 
               return (
                 <tr key={prospect.id} className="transition-colors hover:bg-gray-50">
@@ -298,18 +310,37 @@ export function ProspectTable() {
                     )}
                   </td>
                   <td className="px-6 py-4">
-                    {whatsappLink ? (
-                      <a
-                        href={whatsappLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center rounded bg-green-600 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-green-700"
+                    <div className="flex flex-col items-start gap-1">
+                      {whatsappLink ? (
+                        <a
+                          href={whatsappLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={prospect.outreachMessage ?? undefined}
+                          className="inline-flex items-center rounded bg-green-600 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-green-700"
+                        >
+                          {prospect.outreachMessage ? "WhatsApp + mensagem" : "Abrir WhatsApp"}
+                        </a>
+                      ) : (
+                        <span className="text-gray-300">—</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setGeneratingId(prospect.id);
+                          generateOutreach.mutate({ prospectId: prospect.id, channel: "whatsapp" });
+                        }}
+                        disabled={isGenerating}
+                        title={prospect.outreachMessage ?? undefined}
+                        className="text-xs font-medium text-indigo-600 hover:underline disabled:cursor-not-allowed disabled:text-gray-400"
                       >
-                        Abrir WhatsApp
-                      </a>
-                    ) : (
-                      <span className="text-gray-300">—</span>
-                    )}
+                        {isGenerating
+                          ? "Gerando..."
+                          : prospect.outreachMessage
+                            ? "Regerar abordagem"
+                            : "Gerar abordagem"}
+                      </button>
+                    </div>
                   </td>
                   <td className="px-6 py-4">
                     {prospect.score !== null ? (
