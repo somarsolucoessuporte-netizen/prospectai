@@ -58,7 +58,9 @@ export const prospectRouter = router({
       // "fire-and-forget" para /api/worker e cancelado antes de rodar.
       // Processar dentro da mesma invocacao garante que o job realmente execute.
       const overpassUrl = process.env.OSM_OVERPASS_URL ?? "https://overpass-api.de/api/interpreter";
-      const worker = new AgentWorker(overpassUrl);
+      const groqApiKey = process.env.GROQ_API_KEY ?? "";
+      const groqModel = process.env.GROQ_MODEL ?? "llama3-70b-8192";
+      const worker = new AgentWorker(overpassUrl, groqApiKey, groqModel);
       await worker.processJob(job.id);
 
       const finalJob = await ctx.db.agentJob.findUnique({
@@ -67,6 +69,57 @@ export const prospectRouter = router({
       });
 
       return { jobId: job.id, sessionId: session.id, status: finalJob?.status ?? "PENDING" };
+    }),
+
+  // Enfileira enrichment + scoring para prospects ainda sem score e drena a fila.
+  // Usado pelo botao "Analisar tudo com IA" na tabela de prospects.
+  enrichAll: protectedProcedure
+    .input(z.object({ sessionId: z.string().optional() }).optional())
+    .mutation(async ({ input, ctx }) => {
+      const organizationId = ctx.organizationId;
+      if (!organizationId) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Organizacao nao encontrada" });
+      }
+
+      const prospects = await ctx.db.prospect.findMany({
+        where: {
+          organizationId,
+          score: null,
+          ...(input?.sessionId
+            ? { searchSessions: { some: { sessionId: input.sessionId } } }
+            : {}),
+        },
+        select: { id: true, website: true },
+        take: 50,
+      });
+
+      for (const prospect of prospects) {
+        if (prospect.website) {
+          await ctx.db.agentJob.create({
+            data: {
+              agentName: "enrichment",
+              status: "PENDING",
+              payload: { prospectId: prospect.id, website: prospect.website },
+            },
+          });
+        }
+
+        await ctx.db.agentJob.create({
+          data: {
+            agentName: "scoring",
+            status: "PENDING",
+            payload: { prospectId: prospect.id },
+          },
+        });
+      }
+
+      const overpassUrl = process.env.OSM_OVERPASS_URL ?? "https://overpass-api.de/api/interpreter";
+      const groqApiKey = process.env.GROQ_API_KEY ?? "";
+      const groqModel = process.env.GROQ_MODEL ?? "llama3-70b-8192";
+      const worker = new AgentWorker(overpassUrl, groqApiKey, groqModel);
+      const processed = await worker.processBatch();
+
+      return { queued: prospects.length, processed };
     }),
 
   // Verifica o status de um job
@@ -169,6 +222,7 @@ export const prospectRouter = router({
                 googleRating: true,
                 googleReviews: true,
                 score: true,
+                scoreReason: true,
                 status: true,
                 sources: true,
                 createdAt: true,

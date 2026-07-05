@@ -40,6 +40,14 @@ const STATUS_COLORS: Record<ProspectStatus, string> = {
 
 const STATUS_OPTIONS = Object.keys(STATUS_LABELS) as ProspectStatus[];
 
+/** Cor da barra de score por faixa de potencial comercial. */
+function scoreBarColor(score: number): string {
+  if (score <= 30) return "bg-red-500";
+  if (score <= 60) return "bg-yellow-500";
+  if (score <= 80) return "bg-green-400";
+  return "bg-green-600";
+}
+
 function sanitizeForFilename(value: string): string {
   return (
     value
@@ -95,6 +103,15 @@ export function ProspectTable() {
       if (selectedSessionId) {
         void utils.prospect.bySession.invalidate({ sessionId: selectedSessionId });
       }
+    },
+  });
+
+  const enrichAll = trpc.prospect.enrichAll.useMutation({
+    onSuccess: () => {
+      if (selectedSessionId) {
+        void utils.prospect.bySession.invalidate({ sessionId: selectedSessionId });
+      }
+      void utils.prospect.sessions.invalidate();
     },
   });
 
@@ -182,15 +199,35 @@ export function ProspectTable() {
             {list.data?.total ?? 0} empresa{list.data?.total === 1 ? "" : "s"} nesta busca
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleExport}
-          disabled={!list.data?.prospects.length}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Exportar Excel
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              if (selectedSessionId) {
+                enrichAll.mutate({ sessionId: selectedSessionId });
+              }
+            }}
+            disabled={!list.data?.prospects.length || enrichAll.isPending}
+            className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {enrichAll.isPending ? "Analisando..." : "Analisar tudo com IA"}
+          </button>
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={!list.data?.prospects.length}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Exportar Excel
+          </button>
+        </div>
       </div>
+      {enrichAll.isSuccess && (
+        <div className="border-b border-indigo-100 bg-indigo-50 px-6 py-2 text-xs text-indigo-700">
+          {enrichAll.data.queued} prospect(s) na fila de análise — {enrichAll.data.processed}{" "}
+          processado(s) nesta rodada. Clique novamente para continuar processando os restantes.
+        </div>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -276,14 +313,17 @@ export function ProspectTable() {
                   </td>
                   <td className="px-6 py-4">
                     {prospect.score !== null ? (
-                      <div className="flex items-center gap-2">
+                      <div
+                        className="flex items-center gap-2"
+                        title={prospect.scoreReason ?? undefined}
+                      >
                         <div className="h-1.5 w-16 rounded-full bg-gray-200">
                           <div
-                            className="h-1.5 rounded-full bg-indigo-600"
+                            className={`h-1.5 rounded-full ${scoreBarColor(prospect.score)}`}
                             style={{ width: `${prospect.score}%` }}
                           />
                         </div>
-                        <span className="text-xs font-medium text-gray-700">{prospect.score}</span>
+                        <span className="text-xs font-bold text-gray-800">{prospect.score}</span>
                       </div>
                     ) : (
                       <span className="text-xs text-gray-400">Pendente</span>

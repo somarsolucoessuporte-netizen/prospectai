@@ -1,23 +1,41 @@
 import { prisma, type AgentJob, type Prisma } from "@prospectai/database";
 
+import { CollectorAgent, type CollectorPayload } from "../collector/CollectorAgent";
+import { EnrichmentAgent, type EnrichmentPayload } from "../enrichment/EnrichmentAgent";
+import { ScoringAgent, type ScoringPayload } from "../scoring/ScoringAgent";
 import { ProspectPersistenceService } from "../services/ProspectPersistenceService";
 import { ScoutAgent, type ScoutPayload, type ScoutResult } from "../scout/ScoutAgent";
+import type { AgentResult } from "../base/Agent";
 
 /**
  * AgentWorker — processa jobs da fila AgentJob.
  *
  * Design simples para MVP: sem loop de polling em background (nao ha um
  * processo Node de longa duracao no ambiente serverless da Vercel). Cada
- * job e processado de forma sincrona dentro da propria requisicao que o
- * cria (ver prospect.ts#search). processNext() fica disponivel para
- * disparo manual/rotina de limpeza de jobs presos.
+ * job e processado de forma sincrona dentro da requisicao que o dispara
+ * (ver prospect.ts#search e prospect.ts#enrichAll). processNext() e
+ * processBatch() ficam disponiveis para drenar a fila sob demanda.
+ *
+ * Pipeline da Fase 2:
+ *   scout -> (persiste prospects) -> enfileira scoring + enrichment por prospect
+ *   enrichment -> extrai contato do website
+ *   scoring   -> gera score 0-100 com Groq/Llama 3
+ *   collector -> busca CNPJ (disponivel, acionado sob demanda)
  */
 export class AgentWorker {
   private readonly persistenceService: ProspectPersistenceService;
   private readonly overpassUrl: string;
+  private readonly groqApiKey: string;
+  private readonly groqModel: string;
 
-  constructor(overpassUrl = "https://overpass-api.de/api/interpreter") {
+  constructor(
+    overpassUrl = "https://overpass-api.de/api/interpreter",
+    groqApiKey = "",
+    groqModel = "llama3-70b-8192"
+  ) {
     this.overpassUrl = overpassUrl;
+    this.groqApiKey = groqApiKey;
+    this.groqModel = groqModel;
     this.persistenceService = new ProspectPersistenceService();
   }
 
@@ -34,6 +52,24 @@ export class AgentWorker {
     if (!job) return false;
 
     return this.runJob(job);
+  }
+
+  /**
+   * Drena a fila processando ate `maxJobs` jobs, respeitando um orcamento de
+   * tempo (`maxMillis`) para nao estourar o limite da funcao serverless.
+   * Retorna quantos jobs foram processados.
+   */
+  async processBatch(maxJobs = 8, maxMillis = 45_000): Promise<number> {
+    const deadline = Date.now() + maxMillis;
+    let processed = 0;
+
+    while (processed < maxJobs && Date.now() < deadline) {
+      const advanced = await this.processNext();
+      if (!advanced) break;
+      processed++;
+    }
+
+    return processed;
   }
 
   /** Processa um job especifico, se ainda estiver pendente. */
@@ -53,41 +89,10 @@ export class AgentWorker {
 
     try {
       const payload = job.payload as Record<string, unknown>;
-
-      if (job.agentName !== "scout") {
-        throw new Error(`Agente desconhecido: ${job.agentName}`);
-      }
-
-      const agent = new ScoutAgent(this.overpassUrl);
-      const organizationId = (payload.organizationId as string | undefined) ?? "";
-      const sessionId = payload.sessionId as string | undefined;
-      const result = await agent.execute(payload as unknown as ScoutPayload, {
-        organizationId,
-        jobId: job.id,
-        payload,
-      });
+      const result = await this.dispatch(job, payload);
 
       if (!result.success) {
         throw new Error(result.error ?? "Erro desconhecido no agente");
-      }
-
-      if (result.data) {
-        const scoutData: ScoutResult = result.data;
-        const persistResult = await this.persistenceService.persistMany(
-          organizationId,
-          sessionId,
-          scoutData.prospects
-        );
-        console.log(
-          `[AgentWorker] Persistidos: ${persistResult.created} criados, ${persistResult.skipped} ignorados`
-        );
-
-        if (sessionId) {
-          await prisma.searchSession.update({
-            where: { id: sessionId },
-            data: { totalFound: persistResult.prospects.length },
-          });
-        }
       }
 
       await prisma.agentJob.update({
@@ -114,6 +119,120 @@ export class AgentWorker {
       });
 
       return false;
+    }
+  }
+
+  private async dispatch(
+    job: AgentJob,
+    payload: Record<string, unknown>
+  ): Promise<AgentResult> {
+    switch (job.agentName) {
+      case "scout":
+        return this.runScout(job, payload);
+
+      case "collector": {
+        const agent = new CollectorAgent();
+        return agent.execute(payload as unknown as CollectorPayload, {
+          organizationId: "",
+          jobId: job.id,
+          payload,
+        });
+      }
+
+      case "enrichment": {
+        const agent = new EnrichmentAgent();
+        return agent.execute(payload as unknown as EnrichmentPayload, {
+          organizationId: "",
+          jobId: job.id,
+          payload,
+        });
+      }
+
+      case "scoring": {
+        if (!this.groqApiKey) {
+          throw new Error("GROQ_API_KEY nao configurada");
+        }
+        const agent = new ScoringAgent(this.groqApiKey, this.groqModel);
+        return agent.execute(payload as unknown as ScoringPayload, {
+          organizationId: "",
+          jobId: job.id,
+          payload,
+        });
+      }
+
+      default:
+        throw new Error(`Agente desconhecido: ${job.agentName}`);
+    }
+  }
+
+  private async runScout(
+    job: AgentJob,
+    payload: Record<string, unknown>
+  ): Promise<AgentResult<ScoutResult>> {
+    const agent = new ScoutAgent(this.overpassUrl);
+    const organizationId = (payload.organizationId as string | undefined) ?? "";
+    const sessionId = payload.sessionId as string | undefined;
+
+    const result = await agent.execute(payload as unknown as ScoutPayload, {
+      organizationId,
+      jobId: job.id,
+      payload,
+    });
+
+    if (!result.success || !result.data) {
+      return result;
+    }
+
+    const scoutData: ScoutResult = result.data;
+    const persistResult = await this.persistenceService.persistMany(
+      organizationId,
+      sessionId,
+      scoutData.prospects
+    );
+    console.log(
+      `[AgentWorker] Persistidos: ${persistResult.created} criados, ${persistResult.skipped} ignorados`
+    );
+
+    if (sessionId) {
+      await prisma.searchSession.update({
+        where: { id: sessionId },
+        data: { totalFound: persistResult.prospects.length },
+      });
+    }
+
+    await this.enqueueEnrichmentPipeline(persistResult.prospects);
+
+    return result;
+  }
+
+  /**
+   * Enfileira os jobs de enriquecimento e scoring para os prospects recem
+   * persistidos. Enrichment vem antes de scoring na fila para que o score
+   * ja considere os dados extraidos do website.
+   */
+  private async enqueueEnrichmentPipeline(
+    prospects: { id: string; website: string | null }[]
+  ): Promise<void> {
+    for (const prospect of prospects) {
+      if (prospect.website) {
+        await prisma.agentJob.create({
+          data: {
+            agentName: "enrichment",
+            status: "PENDING",
+            payload: { prospectId: prospect.id, website: prospect.website },
+          },
+        });
+      }
+
+      if (this.groqApiKey) {
+        await prisma.agentJob.create({
+          data: {
+            agentName: "scoring",
+            status: "PENDING",
+            payload: { prospectId: prospect.id },
+          },
+        });
+      }
     }
   }
 }
