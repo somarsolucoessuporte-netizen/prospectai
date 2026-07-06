@@ -16,6 +16,7 @@ model Organization {
   id        String   @id @default(cuid())
   name      String
   slug      String   @unique
+  apiKey    String?  @unique @map("api_key") // chave para a API publica de leitura (integracoes)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

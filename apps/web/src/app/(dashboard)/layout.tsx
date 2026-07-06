@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
+import { DashboardNav } from "@/components/layout/DashboardNav";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { ensureOrganizationId } from "@/server/organization";
 
@@ -22,8 +23,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <main className="flex-1">{children}</main>
+    <div className="flex min-h-screen flex-col bg-gray-50">
+      <DashboardNav />
+      <main className="mx-auto w-full max-w-7xl flex-1">{children}</main>
       <footer className="border-t p-4 text-center text-xs text-gray-400">
         Desenvolvido por Somar Solucoes Digitais
       </footer>

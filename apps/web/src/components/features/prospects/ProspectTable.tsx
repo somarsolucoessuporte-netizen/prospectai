@@ -5,48 +5,13 @@ import * as XLSX from "xlsx";
 
 import { toWhatsAppLink } from "@/lib/whatsapp";
 import { trpc } from "@/lib/trpc/client";
-
-type ProspectStatus =
-  | "NEW"
-  | "ENRICHED"
-  | "ANALYZED"
-  | "CONTACTED"
-  | "NEGOTIATING"
-  | "CONVERTED"
-  | "LOST"
-  | "DISQUALIFIED";
-
-const STATUS_LABELS: Record<ProspectStatus, string> = {
-  NEW: "Novo",
-  ENRICHED: "Enriquecido",
-  ANALYZED: "Analisado",
-  CONTACTED: "Contatado",
-  NEGOTIATING: "Negociando",
-  CONVERTED: "Convertido",
-  LOST: "Perdido",
-  DISQUALIFIED: "Desqualificado",
-};
-
-const STATUS_COLORS: Record<ProspectStatus, string> = {
-  NEW: "bg-gray-100 text-gray-700",
-  ENRICHED: "bg-blue-100 text-blue-700",
-  ANALYZED: "bg-purple-100 text-purple-700",
-  CONTACTED: "bg-yellow-100 text-yellow-700",
-  NEGOTIATING: "bg-orange-100 text-orange-700",
-  CONVERTED: "bg-green-100 text-green-700",
-  LOST: "bg-red-100 text-red-700",
-  DISQUALIFIED: "bg-gray-100 text-gray-500",
-};
-
-const STATUS_OPTIONS = Object.keys(STATUS_LABELS) as ProspectStatus[];
-
-/** Cor da barra de score por faixa de potencial comercial. */
-function scoreBarColor(score: number): string {
-  if (score <= 30) return "bg-red-500";
-  if (score <= 60) return "bg-yellow-500";
-  if (score <= 80) return "bg-green-400";
-  return "bg-green-600";
-}
+import {
+  STATUS_COLORS,
+  STATUS_LABELS,
+  STATUS_OPTIONS,
+  scoreBarColor,
+  type ProspectStatus,
+} from "@/lib/prospect-status";
 
 function sanitizeForFilename(value: string): string {
   return (
@@ -62,6 +27,9 @@ export function ProspectTable() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<ProspectStatus | "ALL">("ALL");
+  const [minScore, setMinScore] = useState(0);
+  const [onlyWhatsApp, setOnlyWhatsApp] = useState(false);
 
   const sessions = trpc.prospect.sessions.useQuery();
 
@@ -126,6 +94,14 @@ export function ProspectTable() {
   });
 
   const selectedSession = sessions.data?.find((s) => s.id === selectedSessionId);
+
+  const allProspects = list.data?.prospects ?? [];
+  const visibleProspects = allProspects.filter((p) => {
+    if (statusFilter !== "ALL" && p.status !== statusFilter) return false;
+    if (minScore > 0 && (p.score ?? -1) < minScore) return false;
+    if (onlyWhatsApp && !toWhatsAppLink(p.phone)) return false;
+    return true;
+  });
 
   const handleExport = () => {
     if (!list.data?.prospects.length || !selectedSession) return;
@@ -240,6 +216,51 @@ export function ProspectTable() {
         </div>
       )}
 
+      {/* Filtros */}
+      {selectedSessionId && (
+        <div className="flex flex-wrap items-center gap-3 border-b border-gray-100 px-6 py-3 text-sm">
+          <label className="flex items-center gap-1.5 text-gray-600">
+            Status:
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as ProspectStatus | "ALL")}
+              className="rounded border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="ALL">Todos</option>
+              {STATUS_OPTIONS.map((s) => (
+                <option key={s} value={s}>
+                  {STATUS_LABELS[s]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5 text-gray-600">
+            Score mín.: <span className="font-medium text-gray-800">{minScore}</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={minScore}
+              onChange={(e) => setMinScore(Number(e.target.value))}
+              className="w-32 accent-indigo-600"
+            />
+          </label>
+          <label className="flex items-center gap-1.5 text-gray-600">
+            <input
+              type="checkbox"
+              checked={onlyWhatsApp}
+              onChange={(e) => setOnlyWhatsApp(e.target.checked)}
+              className="accent-green-600"
+            />
+            Só com WhatsApp
+          </label>
+          <span className="ml-auto text-xs text-gray-400">
+            {visibleProspects.length} de {allProspects.length} exibidos
+          </span>
+        </div>
+      )}
+
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -269,14 +290,16 @@ export function ProspectTable() {
                 </td>
               </tr>
             )}
-            {selectedSessionId && !list.isLoading && list.data?.prospects.length === 0 && (
+            {selectedSessionId && !list.isLoading && visibleProspects.length === 0 && (
               <tr>
                 <td colSpan={8} className="px-6 py-8 text-center text-gray-400">
-                  Nenhum prospect encontrado nesta busca.
+                  {allProspects.length === 0
+                    ? "Nenhum prospect encontrado nesta busca."
+                    : "Nenhum prospect corresponde aos filtros."}
                 </td>
               </tr>
             )}
-            {list.data?.prospects.map((prospect) => {
+            {visibleProspects.map((prospect) => {
               const whatsappLink = toWhatsAppLink(prospect.phone, prospect.outreachMessage);
               const status = prospect.status as ProspectStatus;
               const isGenerating = generatingId === prospect.id;
@@ -284,7 +307,12 @@ export function ProspectTable() {
               return (
                 <tr key={prospect.id} className="transition-colors hover:bg-gray-50">
                   <td className="px-6 py-4">
-                    <div className="font-medium text-gray-900">{prospect.name}</div>
+                    <a
+                      href={`/prospects/${prospect.id}`}
+                      className="font-medium text-gray-900 hover:text-indigo-600 hover:underline"
+                    >
+                      {prospect.name}
+                    </a>
                     {prospect.website && (
                       <a
                         href={prospect.website}

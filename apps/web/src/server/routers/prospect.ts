@@ -338,6 +338,32 @@ export const prospectRouter = router({
       return { success: true };
     }),
 
+  // Lista prospects para o quadro de pipeline (CRM), agrupados por status no cliente.
+  // Prioriza os de maior score para aparecerem no topo de cada coluna.
+  pipeline: protectedProcedure
+    .input(z.object({ limit: z.number().min(1).max(1000).default(500) }).optional())
+    .query(async ({ input, ctx }) => {
+      const organizationId = ctx.organizationId;
+      if (!organizationId) return [];
+
+      return ctx.db.prospect.findMany({
+        where: { organizationId },
+        orderBy: [{ score: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
+        take: input?.limit ?? 500,
+        select: {
+          id: true,
+          name: true,
+          category: true,
+          city: true,
+          state: true,
+          phone: true,
+          score: true,
+          status: true,
+          outreachMessage: true,
+        },
+      });
+    }),
+
   // Atualiza o status de um prospect (ex.: Novo -> Contatado)
   updateStatus: protectedProcedure
     .input(z.object({ id: z.string(), status: z.enum(PROSPECT_STATUS_VALUES) }))
