@@ -156,4 +156,4 @@ Todo sistema, dashboard, pagina publica ou painel interno deve conter no rodape:
 
 ---
 
-_Ultima atualizacao: Fase 0 — Fundacao_
+_Ultima atualizacao: Fases 2-6 — Collector/Enrichment/Scoring, Writer, Dashboard, CRM e API publica_
